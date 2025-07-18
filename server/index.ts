@@ -29,5 +29,9 @@ export function createServer() {
   app.post("/api/moments", createMoment);
   app.delete("/api/moments/:id", deleteMoment);
 
+  // Replies API routes
+  app.post("/api/replies", createReply);
+  app.delete("/api/replies/:id", deleteReply);
+
   return app;
 }
