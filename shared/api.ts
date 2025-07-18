@@ -10,3 +10,26 @@
 export interface DemoResponse {
   message: string;
 }
+
+/**
+ * Shared types for Moments API
+ */
+export interface Moment {
+  id: string;
+  text: string;
+  image?: string;
+  anonymousId: string;
+  displayName: string;
+  timestamp: number;
+}
+
+export interface CreateMomentRequest {
+  text: string;
+  image?: string;
+  anonymousId: string;
+  displayName: string;
+}
+
+export interface DeleteMomentRequest {
+  anonymousId: string;
+}
