@@ -12,9 +12,20 @@ import {
   Check,
   Heart,
   RefreshCw,
+  MessageCircle,
+  Send,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import FloatingParticles from "@/components/ui/floating-particles";
-import { Moment, CreateMomentRequest, DeleteMomentRequest } from "@shared/api";
+import {
+  Moment,
+  Reply,
+  CreateMomentRequest,
+  CreateReplyRequest,
+  DeleteMomentRequest,
+  DeleteReplyRequest,
+} from "@shared/api";
 
 function getAnonymousId(): string {
   let id = localStorage.getItem("moments_anonymous_id");
@@ -53,6 +64,15 @@ export default function Index() {
   const [anonymousId] = useState(() => getAnonymousId());
   const [visibleMoments, setVisibleMoments] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  // Reply-related state
+  const [replyingTo, setReplyingTo] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const [isPostingReply, setIsPostingReply] = useState(false);
+  const [expandedReplies, setExpandedReplies] = useState<Set<string>>(
+    new Set(),
+  );
+  const [showReplySuccess, setShowReplySuccess] = useState(false);
 
   // Fetch moments from API
   const fetchMoments = async () => {
@@ -198,6 +218,112 @@ export default function Index() {
     }
   };
 
+  const postReply = async (momentId: string) => {
+    if (!replyText.trim()) return;
+
+    setIsPostingReply(true);
+    setError(null);
+
+    try {
+      const replyData: CreateReplyRequest = {
+        text: replyText.trim(),
+        anonymousId,
+        displayName,
+        momentId,
+      };
+
+      const response = await fetch("/api/replies", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(replyData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to post reply");
+      }
+
+      const newReply = await response.json();
+
+      // Update the moment with the new reply
+      setMoments((prev) =>
+        prev.map((moment) =>
+          moment.id === momentId
+            ? {
+                ...moment,
+                replies: [...moment.replies, newReply],
+                replyCount: moment.replyCount + 1,
+              }
+            : moment,
+        ),
+      );
+
+      // Auto-expand replies to show the new reply
+      setExpandedReplies((prev) => new Set([...prev, momentId]));
+
+      setReplyText("");
+      setReplyingTo(null);
+      setShowReplySuccess(true);
+
+      setTimeout(() => setShowReplySuccess(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to post reply");
+    } finally {
+      setIsPostingReply(false);
+    }
+  };
+
+  const deleteReply = async (replyId: string, momentId: string) => {
+    try {
+      setError(null);
+      const deleteData: DeleteReplyRequest = {
+        anonymousId,
+      };
+
+      const response = await fetch(`/api/replies/${replyId}`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(deleteData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to delete reply");
+      }
+
+      // Remove the reply from the moment
+      setMoments((prev) =>
+        prev.map((moment) =>
+          moment.id === momentId
+            ? {
+                ...moment,
+                replies: moment.replies.filter((reply) => reply.id !== replyId),
+                replyCount: Math.max(0, moment.replyCount - 1),
+              }
+            : moment,
+        ),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete reply");
+    }
+  };
+
+  const toggleReplies = (momentId: string) => {
+    setExpandedReplies((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(momentId)) {
+        newSet.delete(momentId);
+      } else {
+        newSet.add(momentId);
+      }
+      return newSet;
+    });
+  };
+
   const formatTimestamp = (timestamp: number) => {
     const now = Date.now();
     const diff = now - timestamp;
@@ -227,7 +353,7 @@ export default function Index() {
             Moments
           </h1>
           <p className="text-gray-600 dark:text-gray-300">
-            Share your moments with the world
+            Share your moments and connect with others
           </p>
           <div className="flex items-center justify-center gap-2 mt-2">
             <Button
@@ -255,12 +381,21 @@ export default function Index() {
           </div>
         )}
 
-        {/* Success Message */}
+        {/* Success Messages */}
         {showSuccess && (
           <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 animate-slide-down">
             <div className="bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-2">
               <Heart className="w-5 h-5" />
               Moment shared with everyone!
+            </div>
+          </div>
+        )}
+
+        {showReplySuccess && (
+          <div className="fixed top-32 left-1/2 transform -translate-x-1/2 z-50 animate-slide-down">
+            <div className="bg-blue-500 text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-2">
+              <MessageCircle className="w-5 h-5" />
+              Reply posted!
             </div>
           </div>
         )}
@@ -399,7 +534,7 @@ export default function Index() {
 
         {/* Moments Feed */}
         {!isLoading && (
-          <div className="space-y-4">
+          <div className="space-y-6">
             {moments.length === 0 ? (
               <Card className="border-0 shadow-lg bg-white/60 dark:bg-gray-800/60 animate-fade-in">
                 <CardContent className="p-8 text-center">
@@ -426,6 +561,7 @@ export default function Index() {
                   style={{ animationDelay: `${index * 0.05}s` }}
                 >
                   <CardContent className="p-6">
+                    {/* Moment Header */}
                     <div className="flex items-start justify-between mb-4">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full flex items-center justify-center text-white font-semibold">
@@ -458,6 +594,7 @@ export default function Index() {
                       )}
                     </div>
 
+                    {/* Moment Content */}
                     <p className="text-gray-800 dark:text-gray-200 mb-4 leading-relaxed">
                       {moment.text}
                     </p>
@@ -466,9 +603,144 @@ export default function Index() {
                       <img
                         src={moment.image}
                         alt="Moment"
-                        className="w-full h-64 object-cover rounded-lg"
+                        className="w-full h-64 object-cover rounded-lg mb-4"
                       />
                     )}
+
+                    {/* Moment Actions */}
+                    <div className="flex items-center gap-4 pt-4 border-t border-gray-100 dark:border-gray-700">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setReplyingTo(moment.id)}
+                        className="text-gray-600 hover:text-purple-600"
+                      >
+                        <MessageCircle className="w-4 h-4 mr-2" />
+                        Reply
+                      </Button>
+
+                      {moment.replyCount > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => toggleReplies(moment.id)}
+                          className="text-gray-600 hover:text-blue-600"
+                        >
+                          {expandedReplies.has(moment.id) ? (
+                            <ChevronUp className="w-4 h-4 mr-2" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4 mr-2" />
+                          )}
+                          {moment.replyCount}{" "}
+                          {moment.replyCount === 1 ? "reply" : "replies"}
+                        </Button>
+                      )}
+                    </div>
+
+                    {/* Reply Form */}
+                    {replyingTo === moment.id && (
+                      <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg animate-slide-down">
+                        <div className="flex items-start gap-3 mb-3">
+                          <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full flex items-center justify-center text-white font-semibold text-sm">
+                            {anonymousId.slice(0, 2).toUpperCase()}
+                          </div>
+                          <div className="flex-1">
+                            <Textarea
+                              placeholder={`Reply to ${moment.displayName}...`}
+                              value={replyText}
+                              onChange={(e) =>
+                                setReplyText(e.target.value.slice(0, 280))
+                              }
+                              className="min-h-[80px] border-0 bg-white dark:bg-gray-600 resize-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <div className="flex justify-between items-center mt-2">
+                              <span className="text-xs text-gray-500">
+                                {replyText.length}/280
+                              </span>
+                              <div className="flex gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setReplyingTo(null);
+                                    setReplyText("");
+                                  }}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  onClick={() => postReply(moment.id)}
+                                  disabled={!replyText.trim() || isPostingReply}
+                                  className="bg-blue-600 hover:bg-blue-700"
+                                >
+                                  {isPostingReply ? (
+                                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                  ) : (
+                                    <Send className="w-4 h-4" />
+                                  )}
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Replies */}
+                    {expandedReplies.has(moment.id) &&
+                      moment.replies.length > 0 && (
+                        <div className="mt-4 space-y-3 animate-slide-down">
+                          {moment.replies.map((reply) => (
+                            <div
+                              key={reply.id}
+                              className="p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg border-l-4 border-blue-500/30"
+                            >
+                              <div className="flex items-start justify-between mb-2">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold text-sm">
+                                    {reply.anonymousId
+                                      .slice(0, 2)
+                                      .toUpperCase()}
+                                  </div>
+                                  <div>
+                                    <div className="font-medium text-sm text-gray-900 dark:text-gray-100">
+                                      {reply.displayName}
+                                      {reply.anonymousId === anonymousId && (
+                                        <Badge
+                                          variant="outline"
+                                          className="ml-2 text-xs"
+                                        >
+                                          You
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                                      {formatTimestamp(reply.timestamp)}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {reply.anonymousId === anonymousId && (
+                                  <Button
+                                    onClick={() =>
+                                      deleteReply(reply.id, moment.id)
+                                    }
+                                    size="sm"
+                                    variant="ghost"
+                                    className="text-red-500 hover:text-red-700 hover:bg-red-50 h-6 w-6 p-0"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </Button>
+                                )}
+                              </div>
+                              <p className="text-gray-700 dark:text-gray-200 text-sm leading-relaxed">
+                                {reply.text}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                   </CardContent>
                 </Card>
               ))
