@@ -14,6 +14,15 @@ export interface DemoResponse {
 /**
  * Shared types for Moments API
  */
+export interface Reply {
+  id: string;
+  text: string;
+  anonymousId: string;
+  displayName: string;
+  timestamp: number;
+  momentId: string;
+}
+
 export interface Moment {
   id: string;
   text: string;
@@ -21,6 +30,8 @@ export interface Moment {
   anonymousId: string;
   displayName: string;
   timestamp: number;
+  replies: Reply[];
+  replyCount: number;
 }
 
 export interface CreateMomentRequest {
@@ -30,6 +41,17 @@ export interface CreateMomentRequest {
   displayName: string;
 }
 
+export interface CreateReplyRequest {
+  text: string;
+  anonymousId: string;
+  displayName: string;
+  momentId: string;
+}
+
 export interface DeleteMomentRequest {
+  anonymousId: string;
+}
+
+export interface DeleteReplyRequest {
   anonymousId: string;
 }
