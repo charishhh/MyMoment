@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { handleDemo } from "./routes/demo";
+import { getMoments, createMoment, deleteMoment } from "./routes/moments";
 
 export function createServer() {
   const app = express();
