@@ -18,5 +18,10 @@ export function createServer() {
 
   app.get("/api/demo", handleDemo);
 
+  // Moments API routes
+  app.get("/api/moments", getMoments);
+  app.post("/api/moments", createMoment);
+  app.delete("/api/moments/:id", deleteMoment);
+
   return app;
 }
