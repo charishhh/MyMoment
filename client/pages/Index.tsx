@@ -16,6 +16,10 @@ import {
   Send,
   ChevronDown,
   ChevronUp,
+  Users,
+  Wifi,
+  WifiOff,
+  Clock,
 } from "lucide-react";
 import FloatingParticles from "@/components/ui/floating-particles";
 import {
@@ -74,40 +78,83 @@ export default function Index() {
   );
   const [showReplySuccess, setShowReplySuccess] = useState(false);
 
+  // Connection and real-time state
+  const [isConnected, setIsConnected] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
+  const [activeUsers, setActiveUsers] = useState<Set<string>>(new Set());
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const [refreshInterval, setRefreshInterval] = useState(10); // seconds
+
   // Fetch moments from API
-  const fetchMoments = async () => {
+  const fetchMoments = async (silent = false) => {
     try {
-      setError(null);
+      if (!silent) setError(null);
       const response = await fetch("/api/moments");
       if (!response.ok) {
         throw new Error("Failed to fetch moments");
       }
       const data = await response.json();
-      setMoments(data);
 
-      // Animate moments in
-      setTimeout(() => {
-        data.forEach((moment: Moment, index: number) => {
-          setTimeout(() => {
-            setVisibleMoments((prev) => [...prev, moment.id]);
-          }, index * 50);
+      // Track unique users for connection display
+      const uniqueUsers = new Set<string>();
+      data.forEach((moment: Moment) => {
+        uniqueUsers.add(moment.anonymousId);
+        moment.replies.forEach((reply: Reply) => {
+          uniqueUsers.add(reply.anonymousId);
         });
-      }, 100);
+      });
+      setActiveUsers(uniqueUsers);
+
+      // Check if we have new moments
+      const hadNewMoments = data.length !== moments.length;
+      setMoments(data);
+      setLastUpdated(new Date());
+      setIsConnected(true);
+
+      // Animate moments in (only for new ones or first load)
+      if (!silent || hadNewMoments) {
+        setVisibleMoments([]);
+        setTimeout(() => {
+          data.forEach((moment: Moment, index: number) => {
+            setTimeout(() => {
+              setVisibleMoments((prev) => [...prev, moment.id]);
+            }, index * 30);
+          });
+        }, 100);
+      }
     } catch (err) {
-      setError("Failed to load moments. Please try again.");
+      setIsConnected(false);
+      if (!silent) {
+        setError("Failed to connect to other users. Trying to reconnect...");
+      }
       console.error("Error fetching moments:", err);
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   };
 
   useEffect(() => {
     fetchMoments();
 
-    // Auto-refresh every 30 seconds to see new moments from other users
-    const interval = setInterval(fetchMoments, 30000);
-    return () => clearInterval(interval);
-  }, []);
+    // More frequent auto-refresh for better connectivity
+    const interval = setInterval(() => {
+      if (autoRefreshEnabled) {
+        fetchMoments(true); // Silent refresh
+      }
+    }, refreshInterval * 1000);
+
+    // Check connection status periodically
+    const connectionCheck = setInterval(() => {
+      fetch("/api/ping")
+        .then(() => setIsConnected(true))
+        .catch(() => setIsConnected(false));
+    }, 5000);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(connectionCheck);
+    };
+  }, [autoRefreshEnabled, refreshInterval]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -177,10 +224,15 @@ export default function Index() {
       setText("");
       removeImage();
       setShowSuccess(true);
+      setIsConnected(true);
 
       setTimeout(() => setShowSuccess(false), 2000);
+
+      // Refresh to get latest from all users
+      setTimeout(() => fetchMoments(true), 1000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to post moment");
+      setIsConnected(false);
     } finally {
       setIsPosting(false);
     }
@@ -213,8 +265,11 @@ export default function Index() {
       setTimeout(() => {
         setMoments((prev) => prev.filter((m) => m.id !== momentId));
       }, 300);
+
+      setIsConnected(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete moment");
+      setIsConnected(false);
     }
   };
 
@@ -266,10 +321,15 @@ export default function Index() {
       setReplyText("");
       setReplyingTo(null);
       setShowReplySuccess(true);
+      setIsConnected(true);
 
       setTimeout(() => setShowReplySuccess(false), 2000);
+
+      // Refresh to get latest replies from all users
+      setTimeout(() => fetchMoments(true), 1000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to post reply");
+      setIsConnected(false);
     } finally {
       setIsPostingReply(false);
     }
@@ -307,8 +367,11 @@ export default function Index() {
             : moment,
         ),
       );
+
+      setIsConnected(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete reply");
+      setIsConnected(false);
     }
   };
 
@@ -337,6 +400,18 @@ export default function Index() {
     return `${days}d ago`;
   };
 
+  const formatLastUpdated = () => {
+    const now = new Date();
+    const diff = now.getTime() - lastUpdated.getTime();
+    const seconds = Math.floor(diff / 1000);
+
+    if (seconds < 5) return "Just updated";
+    if (seconds < 60) return `${seconds}s ago`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    return lastUpdated.toLocaleTimeString();
+  };
+
   return (
     <div className="min-h-screen relative overflow-hidden">
       <FloatingParticles />
@@ -347,7 +422,7 @@ export default function Index() {
       </div>
 
       <div className="container mx-auto px-4 py-8 max-w-2xl relative z-10">
-        {/* Header */}
+        {/* Header with Connection Status */}
         <div className="text-center mb-8 animate-fade-in">
           <h1 className="text-4xl font-bold bg-gradient-to-r from-purple-600 via-pink-600 to-blue-600 bg-clip-text text-transparent mb-2">
             Moments
@@ -355,29 +430,98 @@ export default function Index() {
           <p className="text-gray-600 dark:text-gray-300">
             Share your moments and connect with others
           </p>
+
+          {/* Connection Status & Stats */}
+          <div className="flex items-center justify-center gap-4 mt-4">
+            <div className="flex items-center gap-2">
+              {isConnected ? (
+                <Wifi className="w-4 h-4 text-green-500" />
+              ) : (
+                <WifiOff className="w-4 h-4 text-red-500" />
+              )}
+              <span
+                className={`text-xs ${isConnected ? "text-green-600" : "text-red-600"}`}
+              >
+                {isConnected ? "Connected" : "Reconnecting..."}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-blue-500" />
+              <span className="text-xs text-gray-600">
+                {activeUsers.size} {activeUsers.size === 1 ? "user" : "users"}{" "}
+                active
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <MessageCircle className="w-4 h-4 text-purple-500" />
+              <span className="text-xs text-gray-600">
+                {moments.length} moments shared
+              </span>
+            </div>
+          </div>
+
+          {/* Refresh Controls */}
           <div className="flex items-center justify-center gap-2 mt-2">
             <Button
               variant="ghost"
               size="sm"
-              onClick={fetchMoments}
+              onClick={() => fetchMoments()}
               disabled={isLoading}
               className="text-xs"
             >
               <RefreshCw
                 className={`w-4 h-4 mr-1 ${isLoading ? "animate-spin" : ""}`}
               />
-              Refresh
+              Refresh Now
             </Button>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
+              className={`text-xs ${autoRefreshEnabled ? "text-green-600" : "text-gray-500"}`}
+            >
+              <Clock className="w-4 h-4 mr-1" />
+              Auto: {autoRefreshEnabled ? "ON" : "OFF"}
+            </Button>
+
             <span className="text-xs text-gray-500">
-              • {moments.length} moments shared
+              • Updated {formatLastUpdated()}
             </span>
           </div>
+
+          {/* Auto-refresh interval control */}
+          {autoRefreshEnabled && (
+            <div className="flex items-center justify-center gap-2 mt-2">
+              <span className="text-xs text-gray-500">Refresh every:</span>
+              <select
+                value={refreshInterval}
+                onChange={(e) => setRefreshInterval(Number(e.target.value))}
+                className="text-xs bg-transparent border border-gray-300 rounded px-2 py-1"
+              >
+                <option value={5}>5s</option>
+                <option value={10}>10s</option>
+                <option value={30}>30s</option>
+                <option value={60}>1m</option>
+              </select>
+            </div>
+          )}
         </div>
 
         {/* Error Message */}
         {error && (
           <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg animate-slide-down">
             <p className="text-red-600 dark:text-red-400 text-sm">{error}</p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => fetchMoments()}
+              className="mt-2 text-xs"
+            >
+              Try Reconnecting
+            </Button>
           </div>
         )}
 
@@ -395,7 +539,7 @@ export default function Index() {
           <div className="fixed top-32 left-1/2 transform -translate-x-1/2 z-50 animate-slide-down">
             <div className="bg-blue-500 text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-2">
               <MessageCircle className="w-5 h-5" />
-              Reply posted!
+              Reply shared!
             </div>
           </div>
         )}
@@ -450,6 +594,14 @@ export default function Index() {
                       >
                         <Edit3 className="w-3 h-3" />
                       </Button>
+                      {isConnected && (
+                        <Badge
+                          variant="outline"
+                          className="text-xs text-green-600"
+                        >
+                          Connected
+                        </Badge>
+                      )}
                     </div>
                   )}
                 </div>
@@ -464,6 +616,12 @@ export default function Index() {
 
               <div className="flex justify-between items-center text-sm text-gray-500">
                 <span>{text.length}/280</span>
+                {activeUsers.size > 1 && (
+                  <span className="text-xs">
+                    Will be shared with {activeUsers.size - 1} other
+                    {activeUsers.size === 2 ? "" : "s"}
+                  </span>
+                )}
               </div>
 
               {image && (
@@ -507,7 +665,7 @@ export default function Index() {
 
                 <Button
                   onClick={postMoment}
-                  disabled={!text.trim() || isPosting}
+                  disabled={!text.trim() || isPosting || !isConnected}
                   className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
                 >
                   {isPosting ? (
@@ -515,6 +673,8 @@ export default function Index() {
                       <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                       Sharing...
                     </div>
+                  ) : !isConnected ? (
+                    "Connecting..."
                   ) : (
                     "Share with Everyone"
                   )}
@@ -528,7 +688,7 @@ export default function Index() {
         {isLoading && (
           <div className="text-center py-8">
             <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-            <p className="text-gray-500">Loading moments...</p>
+            <p className="text-gray-500">Connecting to other users...</p>
           </div>
         )}
 
@@ -540,12 +700,27 @@ export default function Index() {
                 <CardContent className="p-8 text-center">
                   <div className="text-gray-500 dark:text-gray-400">
                     <div className="w-16 h-16 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full mx-auto mb-4 flex items-center justify-center">
-                      <ImageIcon className="w-8 h-8 text-white" />
+                      <Users className="w-8 h-8 text-white" />
                     </div>
                     <h3 className="text-lg font-semibold mb-2">
-                      No moments shared yet
+                      {isConnected ? "No moments shared yet" : "Connecting..."}
                     </h3>
-                    <p>Be the first to share a moment with everyone!</p>
+                    <p>
+                      {isConnected
+                        ? "Be the first to share a moment with everyone!"
+                        : "Trying to connect to other users..."}
+                    </p>
+                    {!isConnected && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => fetchMoments()}
+                        className="mt-4"
+                      >
+                        <RefreshCw className="w-4 h-4 mr-2" />
+                        Retry Connection
+                      </Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -570,9 +745,16 @@ export default function Index() {
                         <div>
                           <div className="font-medium text-gray-900 dark:text-gray-100">
                             {moment.displayName || "Anonymous User"}
-                            {moment.anonymousId === anonymousId && (
+                            {moment.anonymousId === anonymousId ? (
                               <Badge variant="outline" className="ml-2 text-xs">
                                 You
+                              </Badge>
+                            ) : (
+                              <Badge
+                                variant="secondary"
+                                className="ml-2 text-xs"
+                              >
+                                Connected User
                               </Badge>
                             )}
                           </div>
@@ -671,7 +853,11 @@ export default function Index() {
                                 <Button
                                   size="sm"
                                   onClick={() => postReply(moment.id)}
-                                  disabled={!replyText.trim() || isPostingReply}
+                                  disabled={
+                                    !replyText.trim() ||
+                                    isPostingReply ||
+                                    !isConnected
+                                  }
                                   className="bg-blue-600 hover:bg-blue-700"
                                 >
                                   {isPostingReply ? (
@@ -706,12 +892,19 @@ export default function Index() {
                                   <div>
                                     <div className="font-medium text-sm text-gray-900 dark:text-gray-100">
                                       {reply.displayName}
-                                      {reply.anonymousId === anonymousId && (
+                                      {reply.anonymousId === anonymousId ? (
                                         <Badge
                                           variant="outline"
                                           className="ml-2 text-xs"
                                         >
                                           You
+                                        </Badge>
+                                      ) : (
+                                        <Badge
+                                          variant="secondary"
+                                          className="ml-2 text-xs"
+                                        >
+                                          Connected
                                         </Badge>
                                       )}
                                     </div>
